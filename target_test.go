@@ -51,6 +51,26 @@ func TestParseTargetObject(t *testing.T) {
 	}
 }
 
+func TestParseTargetWrappedPath(t *testing.T) {
+	target, err := parseTarget(targetInput{host: "vm1", path: "/home/dev/output/\nlong-name.mp4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Path != "/home/dev/output/long-name.mp4" {
+		t.Fatalf("path = %q", target.Path)
+	}
+}
+
+func TestParseTargetWrappedObject(t *testing.T) {
+	target, err := parseTarget(targetInput{path: "s3://bucket/path/\nlong-name.csv"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.URI != "s3://bucket/path/long-name.csv" {
+		t.Fatalf("uri = %q", target.URI)
+	}
+}
+
 func TestParseSSHDestinationUserAtHost(t *testing.T) {
 	host, user := parseSSHDestination([]string{"-i", "/tmp/key", "-o", "ServerAliveInterval=30", "dev@example-host", "-t", "tmux"})
 	if host != "example-host" || user != "dev" {

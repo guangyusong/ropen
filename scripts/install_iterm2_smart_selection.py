@@ -8,8 +8,8 @@ import subprocess
 import tempfile
 
 
-PATH_REGEX = r"""((?:/[^ \t\r\n"'<>]+)+)(?::([0-9]+)(?::([0-9]+))?)?"""
-OBJECT_REGEX = r"""((?:s3|gs|az|rclone)://[^ \t\r\n"'<>]+)"""
+PATH_REGEX = r"""((?:/[^ \t\r\n"'<>]+(?:\r?\n)?)+)(?::([0-9]+)(?::([0-9]+))?)?"""
+OBJECT_REGEX = r"""((?:s3|gs|az|rclone)://[^ \t\r\n"'<>]+(?:\r?\n[^ \t\r\n"'<>]+)*)"""
 
 
 def main() -> int:

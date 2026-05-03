@@ -64,6 +64,7 @@ func parseTarget(in targetInput) (Target, error) {
 	if rawPath == "" {
 		return Target{}, errNoTarget
 	}
+	rawPath = normalizeTerminalWrappedPath(rawPath)
 	if hasControl(rawPath) || hasControl(host) || hasControl(user) || hasControl(cwd) {
 		return Target{}, errors.New("target contains control characters")
 	}
@@ -150,6 +151,24 @@ func objectScheme(s string) string {
 	default:
 		return ""
 	}
+}
+
+func normalizeTerminalWrappedPath(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	if !strings.Contains(s, "\n") {
+		return s
+	}
+	parts := strings.Split(s, "\n")
+	var b strings.Builder
+	for i, part := range parts {
+		if i == 0 {
+			b.WriteString(part)
+			continue
+		}
+		b.WriteString(strings.TrimLeft(part, " \t"))
+	}
+	return b.String()
 }
 
 func detectSSHFromTTY(tty string) (host string, user string, err error) {

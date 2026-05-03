@@ -83,7 +83,7 @@ iTerm2 is the best v0 path because Smart Selection can pass remote context when 
 Add a Smart Selection rule for absolute paths:
 
 ```regex
-((?:/[^ \t\r\n"'<>]+)+)(?::([0-9]+)(?::([0-9]+))?)?
+((?:/[^ \t\r\n"'<>]+(?:\r?\n)?)+)(?::([0-9]+)(?::([0-9]+))?)?
 ```
 
 Action: **Run Command**
@@ -103,8 +103,10 @@ Check **Use interpolated strings for parameters** for the action. The `--tty` fl
 For object storage URIs, add another rule:
 
 ```regex
-((?:s3|gs|az|rclone)://[^ \t\r\n"'<>]+)
+((?:s3|gs|az|rclone)://[^ \t\r\n"'<>]+(?:\r?\n[^ \t\r\n"'<>]+)*)
 ```
+
+The regexes allow newline-wrapped paths. `ropen` removes those terminal wrap newlines before resolving the path.
 
 Action:
 
