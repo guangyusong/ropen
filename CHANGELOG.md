@@ -4,6 +4,10 @@ All notable changes to `ropen` are documented here.
 
 ## Unreleased
 
+No unreleased changes yet.
+
+## v0.1.2
+
 - Add iTerm2 Smart Selection support for relative remote paths such as `asi_prompts/file.md`.
 - Resolve relative paths against iTerm2 cwd when available, with a live tmux cwd fallback for common tmux-backed SSH panes.
 - Expand `~/...` paths during remote stat/copy and keep useful file extensions in the local cache.
