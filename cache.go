@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	posixpath "path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -43,7 +44,11 @@ func resolveLocal(target Target) (string, error) {
 func cachePathForSSH(cacheDir string, host string, remotePath string) string {
 	rel := strings.TrimPrefix(remotePath, "/")
 	if rel == "" || strings.HasPrefix(remotePath, "~") {
-		rel = hashedName(remotePath)
+		ext := posixpath.Ext(remotePath)
+		if len(ext) > 32 || strings.ContainsAny(ext, `/\:`) {
+			ext = ""
+		}
+		rel = hashedName(remotePath) + ext
 	}
 	return filepath.Join(cacheDir, "ssh", safeName(host), filepath.FromSlash(rel))
 }

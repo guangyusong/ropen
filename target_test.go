@@ -41,6 +41,20 @@ func TestParseTargetItermFlagsRelativePath(t *testing.T) {
 	}
 }
 
+func TestParseTargetRelativePathWithTildeCwd(t *testing.T) {
+	target, err := parseTarget(targetInput{
+		host: "vm1",
+		cwd:  "~/Files/Github/research",
+		path: "asi_prompts/t1_chi_square_positivity.md",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Path != "~/Files/Github/research/asi_prompts/t1_chi_square_positivity.md" {
+		t.Fatalf("path = %q", target.Path)
+	}
+}
+
 func TestParseTargetObject(t *testing.T) {
 	target, err := parseTarget(targetInput{args: []string{"s3://bucket/path/file.csv"}})
 	if err != nil {
@@ -72,16 +86,75 @@ func TestParseTargetWrappedObject(t *testing.T) {
 }
 
 func TestParseSSHDestinationUserAtHost(t *testing.T) {
-	host, user := parseSSHDestination([]string{"-i", "/tmp/key", "-o", "ServerAliveInterval=30", "dev@example-host", "-t", "tmux"})
+	host, user, remoteArgs := parseSSHDestination([]string{"-i", "/tmp/key", "-o", "ServerAliveInterval=30", "dev@example-host", "-t", "tmux"})
 	if host != "example-host" || user != "dev" {
 		t.Fatalf("host/user = %q/%q", host, user)
+	}
+	if len(remoteArgs) != 2 || remoteArgs[0] != "-t" || remoteArgs[1] != "tmux" {
+		t.Fatalf("remote args = %#v", remoteArgs)
 	}
 }
 
 func TestParseSSHDestinationLoginOption(t *testing.T) {
-	host, user := parseSSHDestination([]string{"-l", "ubuntu", "vm1"})
+	host, user, remoteArgs := parseSSHDestination([]string{"-l", "ubuntu", "vm1"})
 	if host != "vm1" || user != "ubuntu" {
 		t.Fatalf("host/user = %q/%q", host, user)
+	}
+	if len(remoteArgs) != 0 {
+		t.Fatalf("remote args = %#v", remoteArgs)
+	}
+}
+
+func TestParseRemoteCwdFromTmux(t *testing.T) {
+	args := []string{
+		"-t",
+		"tmux",
+		"-L",
+		"gcp-tmux-Tano-2",
+		"new-session",
+		"-A",
+		"-s",
+		"tmux-4",
+		"-c",
+		"~/Files/Github/research",
+	}
+	got := parseRemoteCwd(args)
+	if got != "~/Files/Github/research" {
+		t.Fatalf("cwd = %q", got)
+	}
+}
+
+func TestParseSSHInvocationForTmuxPane(t *testing.T) {
+	args := []string{
+		"-i",
+		"/tmp/key",
+		"-o",
+		"ServerAliveInterval=30",
+		"dev@203.0.113.10",
+		"-t",
+		"tmux",
+		"-L",
+		"gcp-tmux-Tano-5",
+		"new-session",
+		"-A",
+		"-s",
+		"tmux-16",
+		"-c",
+		"~/Files/Github/",
+	}
+	inv := parseSSHInvocation(args)
+	if inv.Host != "203.0.113.10" || inv.User != "dev" {
+		t.Fatalf("host/user = %q/%q", inv.Host, inv.User)
+	}
+	if len(inv.ConnectArgs) != 5 {
+		t.Fatalf("connect args = %#v", inv.ConnectArgs)
+	}
+	if got := parseRemoteCwd(inv.RemoteArgs); got != "~/Files/Github/" {
+		t.Fatalf("cwd = %q", got)
+	}
+	tmux := parseTmuxContext(inv.RemoteArgs)
+	if tmux.SocketName != "gcp-tmux-Tano-5" || tmux.Session != "tmux-16" {
+		t.Fatalf("tmux = %#v", tmux)
 	}
 }
 

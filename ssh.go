@@ -14,6 +14,7 @@ import (
 type remoteFileInfo struct {
 	Size    int64
 	ModTime time.Time
+	Path    string
 }
 
 func fetchSSH(target Target, cfg Config, refresh bool, dryRun bool) (string, error) {
@@ -22,8 +23,8 @@ func fetchSSH(target Target, cfg Config, refresh bool, dryRun bool) (string, err
 	}
 
 	alias := cfg.hostAlias(target.Host, target.User)
-	localPath := cachePathForSSH(cfg.CacheDir, target.Host, target.Path)
 	if dryRun {
+		localPath := cachePathForSSH(cfg.CacheDir, target.Host, target.Path)
 		fmt.Fprintf(os.Stderr, "would scp %s:%s -> %s\n", alias, target.Path, localPath)
 		return localPath, nil
 	}
@@ -37,6 +38,8 @@ func fetchSSH(target Target, cfg Config, refresh bool, dryRun bool) (string, err
 		return "", fmt.Errorf("remote file is %s, above max-size %s", formatBytes(info.Size), formatBytes(maxBytes))
 	}
 
+	remotePath := firstNonEmpty(info.Path, target.Path)
+	localPath := cachePathForSSH(cfg.CacheDir, target.Host, remotePath)
 	if !refresh && cacheIsFresh(localPath, info) {
 		return localPath, nil
 	}
@@ -44,13 +47,13 @@ func fetchSSH(target Target, cfg Config, refresh bool, dryRun bool) (string, err
 		return "", err
 	}
 	tmp := atomicTarget(localPath)
-	remoteSpec := alias + ":" + target.Path
+	remoteSpec := alias + ":" + remotePath
 	cmd := exec.Command("scp", "-p", remoteSpec, tmp)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		_ = os.Remove(tmp)
-		return "", fmt.Errorf("copy remote file failed: %s", sshErrorHint("scp", alias, target.Path, err, stderr.String()))
+		return "", fmt.Errorf("copy remote file failed: %s", sshErrorHint("scp", alias, remotePath, err, stderr.String()))
 	}
 	if err := os.Rename(tmp, localPath); err != nil {
 		_ = os.Remove(tmp)
@@ -63,11 +66,13 @@ func fetchSSH(target Target, cfg Config, refresh bool, dryRun bool) (string, err
 func statRemote(alias string, remotePath string) (remoteFileInfo, error) {
 	quotedPath := shellQuote(remotePath)
 	script := "p=" + quotedPath + `; ` +
+		`case "$p" in '~') p="$HOME" ;; '~/'*) p="$HOME/${p#\~/}" ;; esac; ` +
 		`if [ ! -e "$p" ]; then echo "not found: $p" >&2; exit 2; fi; ` +
 		`if [ -d "$p" ]; then echo "is a directory: $p" >&2; exit 3; fi; ` +
 		`if stat -c '%s %Y' -- "$p" >/dev/null 2>&1; then stat -c '%s %Y' -- "$p"; ` +
 		`elif stat -f '%z %m' -- "$p" >/dev/null 2>&1; then stat -f '%z %m' -- "$p"; ` +
-		`else wc -c < "$p" | awk '{print $1 " 0"}'; fi`
+		`else wc -c < "$p" | awk '{print $1 " 0"}'; fi; ` +
+		`printf '%s\n' "$p"`
 	cmd := exec.Command("ssh", alias, "sh -lc "+shellQuote(script))
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -76,7 +81,9 @@ func statRemote(alias string, remotePath string) (remoteFileInfo, error) {
 	if err := cmd.Run(); err != nil {
 		return remoteFileInfo{}, fmt.Errorf("inspect remote file failed: %s", sshErrorHint("ssh", alias, remotePath, err, stderr.String()))
 	}
-	fields := strings.Fields(stdout.String())
+	output := strings.TrimRight(stdout.String(), "\r\n")
+	lines := strings.Split(output, "\n")
+	fields := strings.Fields(lines[0])
 	if len(fields) < 2 {
 		return remoteFileInfo{}, fmt.Errorf("remote stat returned unexpected output: %q", strings.TrimSpace(stdout.String()))
 	}
@@ -88,7 +95,11 @@ func statRemote(alias string, remotePath string) (remoteFileInfo, error) {
 	if err != nil {
 		return remoteFileInfo{}, fmt.Errorf("parse remote mtime: %w", err)
 	}
-	return remoteFileInfo{Size: size, ModTime: time.Unix(mtime, 0)}, nil
+	resolvedPath := remotePath
+	if len(lines) > 1 {
+		resolvedPath = lines[len(lines)-1]
+	}
+	return remoteFileInfo{Size: size, ModTime: time.Unix(mtime, 0), Path: resolvedPath}, nil
 }
 
 func cacheIsFresh(localPath string, remote remoteFileInfo) bool {

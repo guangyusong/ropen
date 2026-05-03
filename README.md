@@ -132,7 +132,19 @@ Add a Smart Selection rule for absolute paths:
 Action: **Run Command**
 
 ```bash
-<absolute-path-to-ropen> --tty "\(tty)" --path "\(matches[1])"
+<absolute-path-to-ropen> --tty "\(tty)" --cwd "\(path)" --path "\(matches[1])"
+```
+
+Add another Smart Selection rule for relative paths with at least one directory segment:
+
+```regex
+((?:(?:\.{1,2}/)?[A-Za-z0-9._-]+/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+)(?:\r?\n[A-Za-z0-9._/-]+)*)(?::([0-9]+)(?::([0-9]+))?)?
+```
+
+Use the same action:
+
+```bash
+<absolute-path-to-ropen> --tty "\(tty)" --cwd "\(path)" --path "\(matches[1])"
 ```
 
 Use an absolute path because GUI-launched terminal apps may not inherit your shell `PATH`. After `go install .`, this is usually:
@@ -141,7 +153,7 @@ Use an absolute path because GUI-launched terminal apps may not inherit your she
 $(go env GOPATH)/bin/ropen
 ```
 
-Check **Use interpolated strings for parameters** for the action. The `--tty` flag lets `ropen` recover the SSH destination from the local `ssh` process when iTerm2 Shell Integration is not installed on the remote host.
+Check **Use interpolated strings for parameters** for the action. The `--tty` flag lets `ropen` recover the SSH destination from the local `ssh` process when iTerm2 Shell Integration is not installed on the remote host. The `--cwd` flag lets relative paths resolve against iTerm2's current directory when available; if that looks like a local Mac path, `ropen` falls back to common tmux-backed SSH panes by asking tmux for the active pane cwd.
 
 For object storage URIs, add another rule:
 

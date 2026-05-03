@@ -178,12 +178,16 @@ else:
 }
 
 func ttyCheck(tty string, cfg Config) doctorCheck {
-	host, user, err := detectSSHFromTTY(tty)
+	info, err := detectSSHFromTTY(tty)
 	if err != nil {
 		return doctorCheck{Name: "tty", Status: "warn", Detail: err.Error()}
 	}
-	alias := cfg.hostAlias(host, user)
-	return doctorCheck{Name: "tty", Status: "ok", Detail: fmt.Sprintf("%s -> %s", tty, alias)}
+	alias := cfg.hostAlias(info.Host, info.User)
+	detail := fmt.Sprintf("%s -> %s", tty, alias)
+	if info.Cwd != "" {
+		detail += fmt.Sprintf(" cwd=%s", info.Cwd)
+	}
+	return doctorCheck{Name: "tty", Status: "ok", Detail: detail}
 }
 
 func parseCheck(opts doctorOptions, cfg Config) doctorCheck {

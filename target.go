@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	posixpath "path"
 	"runtime"
 	"strings"
+	"time"
 )
 
 var errNoTarget = errors.New("no target provided")
@@ -43,6 +45,27 @@ type targetInput struct {
 	path string
 	line string
 	col  string
+}
+
+type sshTTYInfo struct {
+	Host        string
+	User        string
+	Cwd         string
+	ConnectArgs []string
+	Tmux        tmuxContext
+}
+
+type sshInvocation struct {
+	Host        string
+	User        string
+	ConnectArgs []string
+	RemoteArgs  []string
+}
+
+type tmuxContext struct {
+	SocketName string
+	SocketPath string
+	Session    string
 }
 
 func parseTarget(in targetInput) (Target, error) {
@@ -84,25 +107,35 @@ func parseTarget(in targetInput) (Target, error) {
 		rawPath = parsedPath
 	}
 
-	cleanPath := cleanRemotePath(rawPath, cwd)
-	if cleanPath == "" {
-		return Target{}, errors.New("empty path")
-	}
-
 	if host == "" || isLocalHost(host) {
 		if in.tty != "" {
-			sshHost, sshUser, err := detectSSHFromTTY(in.tty)
-			if err == nil && sshHost != "" {
+			sshInfo, err := detectSSHFromTTY(in.tty)
+			if err == nil && sshInfo.Host != "" {
+				ttyCwd := sshInfo.Cwd
+				if isRelativePath(rawPath) && (cwd == "" || isLikelyLocalCwd(cwd)) {
+					if liveCwd, err := queryRemoteTmuxCwd(sshInfo.ConnectArgs, sshInfo.Tmux); err == nil && isUsableRemoteCwd(liveCwd) {
+						ttyCwd = liveCwd
+					}
+				}
+				remoteCwd := chooseRemoteCwd(cwd, ttyCwd)
+				cleanPath := cleanRemotePath(rawPath, remoteCwd)
+				if cleanPath == "" {
+					return Target{}, errors.New("empty path")
+				}
 				return Target{
 					Kind: TargetSSH,
-					Host: sshHost,
-					User: firstNonEmpty(user, sshUser),
-					Cwd:  cwd,
+					Host: sshInfo.Host,
+					User: firstNonEmpty(user, sshInfo.User),
+					Cwd:  remoteCwd,
 					Path: cleanPath,
 					Line: in.line,
 					Col:  in.col,
 				}, nil
 			}
+		}
+		cleanPath := cleanRemotePath(rawPath, cwd)
+		if cleanPath == "" {
+			return Target{}, errors.New("empty path")
 		}
 		return Target{
 			Kind: TargetLocal,
@@ -113,6 +146,10 @@ func parseTarget(in targetInput) (Target, error) {
 		}, nil
 	}
 
+	cleanPath := cleanRemotePath(rawPath, cwd)
+	if cleanPath == "" {
+		return Target{}, errors.New("empty path")
+	}
 	return Target{
 		Kind: TargetSSH,
 		Host: host,
@@ -171,10 +208,10 @@ func normalizeTerminalWrappedPath(s string) string {
 	return b.String()
 }
 
-func detectSSHFromTTY(tty string) (host string, user string, err error) {
+func detectSSHFromTTY(tty string) (sshTTYInfo, error) {
 	name := strings.TrimPrefix(tty, "/dev/")
 	if name == "" || strings.Contains(name, "/") {
-		return "", "", fmt.Errorf("invalid tty %q", tty)
+		return sshTTYInfo{}, fmt.Errorf("invalid tty %q", tty)
 	}
 	cmd := exec.Command("ps", "-t", name, "-o", "command=")
 	var stdout bytes.Buffer
@@ -182,28 +219,54 @@ func detectSSHFromTTY(tty string) (host string, user string, err error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", "", fmt.Errorf("ps for tty %s failed: %w: %s", tty, err, strings.TrimSpace(stderr.String()))
+		return sshTTYInfo{}, fmt.Errorf("ps for tty %s failed: %w: %s", tty, err, strings.TrimSpace(stderr.String()))
 	}
 	for _, line := range strings.Split(stdout.String(), "\n") {
 		args := shellFields(line)
 		if len(args) == 0 || baseName(args[0]) != "ssh" {
 			continue
 		}
-		if h, u := parseSSHDestination(args[1:]); h != "" {
-			return h, u, nil
+		inv := parseSSHInvocation(args[1:])
+		if inv.Host != "" {
+			return sshTTYInfo{
+				Host:        inv.Host,
+				User:        inv.User,
+				Cwd:         parseRemoteCwd(inv.RemoteArgs),
+				ConnectArgs: inv.ConnectArgs,
+				Tmux:        parseTmuxContext(inv.RemoteArgs),
+			}, nil
 		}
 	}
-	return "", "", fmt.Errorf("no ssh process found for tty %s", tty)
+	return sshTTYInfo{}, fmt.Errorf("no ssh process found for tty %s", tty)
 }
 
-func parseSSHDestination(args []string) (host string, user string) {
-	optionArgs := map[string]bool{
-		"-B": true, "-b": true, "-c": true, "-D": true, "-E": true,
-		"-e": true, "-F": true, "-I": true, "-i": true, "-J": true,
-		"-L": true, "-l": true, "-m": true, "-O": true, "-o": true,
-		"-p": true, "-Q": true, "-R": true, "-S": true, "-W": true,
-		"-w": true,
-	}
+var sshOptionsWithArgs = map[string]bool{
+	"-B": true, "-b": true, "-c": true, "-D": true, "-E": true,
+	"-e": true, "-F": true, "-I": true, "-i": true, "-J": true,
+	"-L": true, "-l": true, "-m": true, "-O": true, "-o": true,
+	"-p": true, "-Q": true, "-R": true, "-S": true, "-W": true,
+	"-w": true,
+}
+
+var sshQueryOptionsWithArgs = map[string]bool{
+	"-B": true, "-b": true, "-c": true, "-F": true, "-I": true,
+	"-i": true, "-J": true, "-l": true, "-m": true, "-o": true,
+	"-p": true, "-S": true, "-w": true,
+}
+
+var sshQueryOptionsNoArgs = map[string]bool{
+	"-4": true, "-6": true, "-A": true, "-a": true, "-C": true,
+	"-K": true, "-k": true, "-X": true, "-x": true, "-Y": true,
+}
+
+func parseSSHDestination(args []string) (host string, user string, remoteArgs []string) {
+	inv := parseSSHInvocation(args)
+	return inv.Host, inv.User, inv.RemoteArgs
+}
+
+func parseSSHInvocation(args []string) sshInvocation {
+	var user string
+	var connectArgs []string
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "" {
@@ -211,28 +274,51 @@ func parseSSHDestination(args []string) (host string, user string) {
 		}
 		if arg == "--" {
 			if i+1 < len(args) {
-				return splitUserHost(args[i+1], user)
+				host, splitUser := splitUserHost(args[i+1], user)
+				connectArgs = append(connectArgs, args[i+1])
+				return sshInvocation{
+					Host:        host,
+					User:        splitUser,
+					ConnectArgs: connectArgs,
+					RemoteArgs:  args[i+2:],
+				}
 			}
-			return "", ""
+			return sshInvocation{}
 		}
 		if strings.HasPrefix(arg, "-") {
 			if strings.HasPrefix(arg, "-l") && len(arg) > 2 {
 				user = arg[2:]
+				connectArgs = append(connectArgs, arg)
 				continue
 			}
 			if arg == "-l" && i+1 < len(args) {
 				user = args[i+1]
+				connectArgs = append(connectArgs, arg, args[i+1])
 				i++
 				continue
 			}
-			if optionArgs[arg] && i+1 < len(args) {
+			if sshOptionsWithArgs[arg] && i+1 < len(args) {
+				if sshQueryOptionsWithArgs[arg] {
+					connectArgs = append(connectArgs, arg, args[i+1])
+				}
 				i++
+				continue
+			}
+			if sshQueryOptionsNoArgs[arg] {
+				connectArgs = append(connectArgs, arg)
 			}
 			continue
 		}
-		return splitUserHost(arg, user)
+		host, splitUser := splitUserHost(arg, user)
+		connectArgs = append(connectArgs, arg)
+		return sshInvocation{
+			Host:        host,
+			User:        splitUser,
+			ConnectArgs: connectArgs,
+			RemoteArgs:  args[i+1:],
+		}
 	}
-	return "", ""
+	return sshInvocation{}
 }
 
 func splitUserHost(dest string, fallbackUser string) (host string, user string) {
@@ -240,6 +326,129 @@ func splitUserHost(dest string, fallbackUser string) (host string, user string) 
 		return dest[at+1:], dest[:at]
 	}
 	return dest, fallbackUser
+}
+
+func parseRemoteCwd(args []string) string {
+	if cwd := parseTmuxCwd(args); cwd != "" {
+		return cwd
+	}
+	if len(args) == 1 {
+		fields := shellFields(args[0])
+		if cwd := parseTmuxCwd(fields); cwd != "" {
+			return cwd
+		}
+		if cwd := parseCDPrefix(fields); cwd != "" {
+			return cwd
+		}
+	}
+	return parseCDPrefix(args)
+}
+
+func parseTmuxContext(args []string) tmuxContext {
+	if len(args) == 1 {
+		fields := shellFields(args[0])
+		if len(fields) > 1 {
+			return parseTmuxContext(fields)
+		}
+	}
+	for i, arg := range args {
+		if baseName(arg) != "tmux" {
+			continue
+		}
+		var ctx tmuxContext
+		for j := i + 1; j < len(args); j++ {
+			switch args[j] {
+			case "-L":
+				if j+1 < len(args) {
+					ctx.SocketName = args[j+1]
+					j++
+				}
+			case "-S":
+				if j+1 < len(args) {
+					ctx.SocketPath = args[j+1]
+					j++
+				}
+			case "-s", "-t":
+				if j+1 < len(args) {
+					ctx.Session = args[j+1]
+					j++
+				}
+			}
+		}
+		return ctx
+	}
+	return tmuxContext{}
+}
+
+func parseTmuxCwd(args []string) string {
+	for i, arg := range args {
+		if baseName(arg) != "tmux" {
+			continue
+		}
+		for j := i + 1; j < len(args); j++ {
+			if args[j] == "-c" && j+1 < len(args) {
+				return args[j+1]
+			}
+			if strings.HasPrefix(args[j], "-c") && len(args[j]) > 2 {
+				return args[j][2:]
+			}
+		}
+	}
+	return ""
+}
+
+func queryRemoteTmuxCwd(connectArgs []string, tmux tmuxContext) (string, error) {
+	if len(connectArgs) == 0 || !tmux.hasTarget() {
+		return "", errors.New("missing ssh or tmux context")
+	}
+	args := append([]string{}, connectArgs...)
+	tmuxArgs := []string{"tmux"}
+	if tmux.SocketName != "" {
+		tmuxArgs = append(tmuxArgs, "-L", tmux.SocketName)
+	}
+	if tmux.SocketPath != "" {
+		tmuxArgs = append(tmuxArgs, "-S", tmux.SocketPath)
+	}
+	tmuxArgs = append(tmuxArgs, "display-message", "-p")
+	if tmux.Session != "" {
+		tmuxArgs = append(tmuxArgs, "-t", tmux.Session)
+	}
+	tmuxArgs = append(tmuxArgs, "#{pane_current_path}")
+	args = append(args, "sh -lc "+shellQuote(shellJoin(tmuxArgs)))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ssh", args...)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+func shellJoin(args []string) string {
+	quoted := make([]string, 0, len(args))
+	for _, arg := range args {
+		quoted = append(quoted, shellQuote(arg))
+	}
+	return strings.Join(quoted, " ")
+}
+
+func (t tmuxContext) hasTarget() bool {
+	return t.SocketName != "" || t.SocketPath != "" || t.Session != ""
+}
+
+func parseCDPrefix(args []string) string {
+	if len(args) >= 2 && args[0] == "cd" {
+		return args[1]
+	}
+	return ""
 }
 
 func shellFields(s string) []string {
@@ -294,12 +503,45 @@ func baseName(path string) string {
 	return path
 }
 
+func chooseRemoteCwd(itermCwd string, ttyCwd string) string {
+	if itermCwd == "" {
+		return ttyCwd
+	}
+	if ttyCwd == "" {
+		return itermCwd
+	}
+	if isLikelyLocalCwd(itermCwd) {
+		return ttyCwd
+	}
+	return itermCwd
+}
+
+func isLikelyLocalCwd(p string) bool {
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" && (p == home || strings.HasPrefix(p, home+"/")) {
+		return true
+	}
+	wd, err := os.Getwd()
+	if err == nil && wd != "" && (p == wd || strings.HasPrefix(p, wd+"/")) {
+		return true
+	}
+	return false
+}
+
+func isRelativePath(p string) bool {
+	return p != "" && !strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "~")
+}
+
+func isUsableRemoteCwd(p string) bool {
+	return strings.HasPrefix(p, "/") || p == "~" || strings.HasPrefix(p, "~/")
+}
+
 func cleanRemotePath(p string, cwd string) string {
 	if p == "" {
 		return ""
 	}
 	if strings.HasPrefix(p, "~") {
-		return p
+		return posixpath.Clean(p)
 	}
 	if strings.HasPrefix(p, "/") {
 		return posixpath.Clean(p)
@@ -307,7 +549,7 @@ func cleanRemotePath(p string, cwd string) string {
 	if cwd == "" {
 		return posixpath.Clean(p)
 	}
-	if strings.HasPrefix(cwd, "/") {
+	if strings.HasPrefix(cwd, "/") || cwd == "~" || strings.HasPrefix(cwd, "~/") {
 		return posixpath.Clean(posixpath.Join(cwd, p))
 	}
 	return posixpath.Clean(p)

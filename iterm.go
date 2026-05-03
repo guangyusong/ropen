@@ -99,6 +99,7 @@ import sys
 import tempfile
 
 PATH_REGEX = r"""((?:/[^ \t\r\n"'<>]+(?:\r?\n)?)+)(?::([0-9]+)(?::([0-9]+))?)?"""
+RELATIVE_PATH_REGEX = r"""((?:(?:\.{1,2}/)?[A-Za-z0-9._-]+/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+)(?:\r?\n[A-Za-z0-9._/-]+)*)(?::([0-9]+)(?::([0-9]+))?)?"""
 OBJECT_REGEX = r"""((?:s3|gs|az|rclone)://[^ \t\r\n"'<>]+(?:\r?\n[^ \t\r\n"'<>]+)*)"""
 
 ropen = pathlib.Path(sys.argv[1])
@@ -124,7 +125,7 @@ with defaults_path.open("rb") as f:
 log_path = pathlib.Path.home() / "Library/Logs/ropen-iterm.log"
 ropen_cmd = shlex.quote(str(ropen))
 log_cmd = shlex.quote(str(log_path))
-path_command = f'{ropen_cmd} --tty "\\(tty)" --path "\\(matches[1])" >> {log_cmd} 2>&1'
+path_command = f'{ropen_cmd} --tty "\\(tty)" --cwd "\\(path)" --path "\\(matches[1])" >> {log_cmd} 2>&1'
 object_command = f'{ropen_cmd} "\\(matches[1])" >> {log_cmd} 2>&1'
 
 path_rule = {
@@ -134,6 +135,18 @@ path_rule = {
     "actions": [
         {
             "title": "Open remote path with ropen",
+            "action": 2,
+            "parameter": path_command,
+        }
+    ],
+}
+relative_path_rule = {
+    "notes": "ropen remote relative path",
+    "precision": "very_high",
+    "regex": RELATIVE_PATH_REGEX,
+    "actions": [
+        {
+            "title": "Open relative remote path with ropen",
             "action": 2,
             "parameter": path_command,
         }
@@ -157,7 +170,7 @@ changed = 0
 for profile in profiles:
     rules = profile.get("Smart Selection Rules") or list(default_rules)
     rules = [r for r in rules if not str(r.get("notes", "")).startswith("ropen ")]
-    profile["Smart Selection Rules"] = [object_rule, path_rule] + rules
+    profile["Smart Selection Rules"] = [object_rule, path_rule, relative_path_rule] + rules
     profile["Smart Selection Actions Use Interpolated Strings"] = True
     changed += 1
 
