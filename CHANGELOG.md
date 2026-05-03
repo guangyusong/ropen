@@ -6,6 +6,12 @@ All notable changes to `ropen` are documented here.
 
 No unreleased changes yet.
 
+## v0.1.1
+
+- Lower Go module version to 1.22 for the documented minimum toolchain.
+- Document Homebrew installation.
+- Update GitHub Actions versions.
+
 ## v0.1.0
 
 Initial public release.
