@@ -1,0 +1,5 @@
+/.DS_Store
+/ropen
+/dist/
+*.test
+__pycache__/
