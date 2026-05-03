@@ -3,6 +3,7 @@ import argparse
 import datetime as dt
 import pathlib
 import plistlib
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -38,8 +39,10 @@ def main() -> int:
         default_rules = plistlib.load(f)["Rules"]
 
     log_path = pathlib.Path.home() / "Library/Logs/ropen-iterm.log"
-    path_command = f'{args.ropen} --tty "\\(tty)" --path "\\(matches[1])" >> {log_path} 2>&1'
-    object_command = f'{args.ropen} "\\(matches[1])" >> {log_path} 2>&1'
+    ropen_cmd = shlex.quote(args.ropen)
+    log_cmd = shlex.quote(str(log_path))
+    path_command = f'{ropen_cmd} --tty "\\(tty)" --path "\\(matches[1])" >> {log_cmd} 2>&1'
+    object_command = f'{ropen_cmd} "\\(matches[1])" >> {log_cmd} 2>&1'
 
     path_rule = {
         "notes": "ropen remote absolute path",

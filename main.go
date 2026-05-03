@@ -35,6 +35,24 @@ func main() {
 }
 
 func run(args []string) error {
+	if len(args) > 0 {
+		switch args[0] {
+		case "help", "-h", "--help":
+			fmt.Print(usageText())
+			return nil
+		case "version", "--version", "-version":
+			fmt.Println(versionString())
+			return nil
+		case "doctor":
+			return runDoctor(args[1:])
+		case "iterm", "iterm2":
+			return runIterm(args[1:])
+		}
+	}
+	return runOpen(args)
+}
+
+func runOpen(args []string) error {
 	var opts options
 	fs := flag.NewFlagSet("ropen", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -126,13 +144,21 @@ func usageText() string {
   ropen [options] user@host:/absolute/path
   ropen [options] host:/absolute/path
   ropen [options] s3://bucket/key
-  ropen [options] gs://bucket/key
-  ropen [options] --host vm --cwd /work --path output.mp4
+	ropen [options] gs://bucket/key
+	ropen [options] --host vm --cwd /work --path output.mp4
+  ropen doctor
+  ropen iterm install
+  ropen version
 
 Examples:
-  ropen vm1:/home/user/output.mp4
+	ropen vm1:/home/user/output.mp4
   ropen --host vm1 --user ubuntu --path /var/log/app/error.log
-  ropen --host "\h" --user "\u" --cwd "\d" --path "\1"
+	ropen --host "\h" --user "\u" --cwd "\d" --path "\1"
+
+Commands:
+  doctor         Check local dependencies and iTerm2 setup
+  iterm install Install iTerm2 Smart Selection rules
+  version        Print version information
 
 Options:
 `

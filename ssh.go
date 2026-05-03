@@ -50,7 +50,7 @@ func fetchSSH(target Target, cfg Config, refresh bool, dryRun bool) (string, err
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		_ = os.Remove(tmp)
-		return "", fmt.Errorf("scp failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+		return "", fmt.Errorf("copy remote file failed: %s", sshErrorHint("scp", alias, target.Path, err, stderr.String()))
 	}
 	if err := os.Rename(tmp, localPath); err != nil {
 		_ = os.Remove(tmp)
@@ -74,7 +74,7 @@ func statRemote(alias string, remotePath string) (remoteFileInfo, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return remoteFileInfo{}, fmt.Errorf("remote stat failed for %s:%s: %w: %s", alias, remotePath, err, strings.TrimSpace(stderr.String()))
+		return remoteFileInfo{}, fmt.Errorf("inspect remote file failed: %s", sshErrorHint("ssh", alias, remotePath, err, stderr.String()))
 	}
 	fields := strings.Fields(stdout.String())
 	if len(fields) < 2 {
@@ -110,4 +110,26 @@ func shellQuote(s string) string {
 		return "''"
 	}
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+func sshErrorHint(tool string, alias string, remotePath string, err error, stderr string) string {
+	message := strings.TrimSpace(stderr)
+	lower := strings.ToLower(message)
+	target := alias + ":" + remotePath
+	switch {
+	case strings.Contains(lower, "permission denied"):
+		return fmt.Sprintf("%s authentication failed for %s; check your SSH config, ssh-agent, and IdentityFile settings. %v: %s", tool, target, err, message)
+	case strings.Contains(lower, "could not resolve hostname") || strings.Contains(lower, "name or service not known"):
+		return fmt.Sprintf("%s could not resolve host for %s; check the host alias or ~/.ssh/config. %v: %s", tool, target, err, message)
+	case strings.Contains(lower, "no such file") || strings.Contains(lower, "not found"):
+		return fmt.Sprintf("%s could not find %s; the clicked text may be a partial/wrapped path or the file no longer exists. %v: %s", tool, target, err, message)
+	case strings.Contains(lower, "is a directory"):
+		return fmt.Sprintf("%s target is a directory, not a file: %s. %v: %s", tool, target, err, message)
+	case strings.Contains(lower, "connection timed out") || strings.Contains(lower, "operation timed out"):
+		return fmt.Sprintf("%s timed out connecting to %s; check network/Tailscale/VPN reachability. %v: %s", tool, alias, err, message)
+	}
+	if message == "" {
+		return fmt.Sprintf("%s failed for %s: %v", tool, target, err)
+	}
+	return fmt.Sprintf("%s failed for %s: %v: %s", tool, target, err, message)
 }

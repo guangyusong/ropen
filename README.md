@@ -24,13 +24,19 @@ Early v0. The current implementation is a local CLI:
 - `az://account/container/blob` via Azure CLI
 - `rclone://remote/path` via `rclone copyto`
 - iTerm2 Smart Selection friendly flags
+- `ropen doctor` for setup checks
+- `ropen iterm install` for iTerm2 setup
 
 No daemon, no remote agent, no credentials stored.
 
 ## Install
 
+From source:
+
 ```bash
 go install github.com/guangyusong/ropen@latest
+ropen doctor
+ropen iterm install
 ```
 
 For local development:
@@ -38,7 +44,10 @@ For local development:
 ```bash
 go build ./...
 go install .
+ropen doctor
 ```
+
+Tagged GitHub releases provide prebuilt binaries. Homebrew packaging is planned after the v0.1 install path settles.
 
 ## Use
 
@@ -76,9 +85,34 @@ Remove cached files older than 7 days:
 ropen --gc 7
 ```
 
+Check local setup:
+
+```bash
+ropen doctor
+ropen --version
+```
+
 ## iTerm2 Setup
 
-iTerm2 is the best v0 path because Smart Selection can pass remote context when Shell Integration is installed on the remote host.
+iTerm2 is the best v0 path because Smart Selection can pass clicked text into `ropen`. Install the rules with:
+
+```bash
+ropen iterm install
+```
+
+If you are developing from a checkout and want iTerm2 to run a specific binary:
+
+```bash
+ropen iterm install --ropen "$(go env GOPATH)/bin/ropen"
+```
+
+The installer updates all iTerm2 profiles, creates a timestamped preferences backup, and logs click errors to:
+
+```text
+~/Library/Logs/ropen-iterm.log
+```
+
+Manual setup is also possible.
 
 Add a Smart Selection rule for absolute paths:
 
@@ -117,7 +151,7 @@ Action:
 Or run the installer:
 
 ```bash
-python3 scripts/install_iterm2_smart_selection.py --ropen "$(go env GOPATH)/bin/ropen"
+python3 scripts/install_iterm2_smart_selection.py
 ```
 
 ## Config
@@ -125,7 +159,8 @@ python3 scripts/install_iterm2_smart_selection.py --ropen "$(go env GOPATH)/bin/
 Config lives at:
 
 ```text
-~/.config/ropen/config.json
+macOS: ~/Library/Application Support/ropen/config.json
+Linux:  ~/.config/ropen/config.json
 ```
 
 Example:

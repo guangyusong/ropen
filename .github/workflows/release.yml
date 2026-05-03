@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - run: go test ./...
+      - name: Build archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          commit="$(git rev-parse --short HEAD)"
+          date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          mkdir -p dist
+          for goos in darwin linux; do
+            for goarch in amd64 arm64; do
+              name="ropen_${version}_${goos}_${goarch}"
+              GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 \
+                go build \
+                  -ldflags "-s -w -X main.version=${version} -X main.commit=${commit} -X main.date=${date}" \
+                  -o "dist/${name}/ropen" .
+              cp README.md LICENSE "dist/${name}/"
+              tar -C dist -czf "dist/${name}.tar.gz" "$name"
+              rm -rf "dist/${name}"
+            done
+          done
+          cd dist
+          sha256sum *.tar.gz > checksums.txt
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --title "${GITHUB_REF_NAME}" --generate-notes
