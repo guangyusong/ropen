@@ -31,6 +31,15 @@ No daemon, no remote agent, no credentials stored.
 
 ## Install
 
+With Homebrew:
+
+```bash
+brew tap guangyusong/tap
+brew install ropen
+ropen doctor
+ropen iterm install
+```
+
 From source:
 
 ```bash
@@ -47,7 +56,7 @@ go install .
 ropen doctor
 ```
 
-Tagged GitHub releases provide prebuilt binaries. Homebrew packaging is planned after the v0.1 install path settles.
+Tagged GitHub releases also provide prebuilt binaries.
 
 ## Use
 
